@@ -1,0 +1,195 @@
+                              ____________
+
+                               A4 WRITEUP
+                              ____________
+
+
+Problem 1: kmeans_omp
+=====================
+
+kmeans_omp Timing Table
+~~~~~~~~~~~~~~~~~~~~~~~
+
+  Fill in the following table on measuring the performance of your
+  `kmeans_omp' program on Zaratan. Replace 00.00 entries with your
+  actual run times. You can use the provided `time-kmeans-omp-slurm.sh'
+  which, after minor adjustments, should produce all times needed to
+  fill it in. INCLUDE THE SLURM JOB OUTPUT FILE IN YOUR SUBMISSION; this
+  will allow graders to verify your times if in doubt.
+
+  -------------------------------------------------------------------
+                                       Data File                     
+   Procs  digits_all_5e3.txt  digits_all_1e4.txt  digits_all_3e4.txt 
+  -------------------------------------------------------------------
+      1                2.79               16.94               43.36 
+      4                1.01                4.83               12.62 
+      8                0.72                2.85                7.37 
+     16                0.58                1.90                4.86 
+     36                0.51                1.44                3.56 
+     64                0.52                1.39                3.20 
+     85                0.53                1.24                3.13 
+    128                0.58                1.60                3.22 
+  -------------------------------------------------------------------
+
+
+kmeans_omp Discussion Questions
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  Analyze your table of results and answer the following questions.
+  1. Did using more processors result in speedups?
+  2. Describe any trends or anomalies you see in the timings and
+     speculate on their causes - e.g. was there are a steady increase in
+     runtimes, steady decrease, or jagged changes in timing?
+  3. Describe your general approach on how you used OpenMP to subdivide
+     the work for the two main portions of the algorithm
+     - (A) How did you subdivide the Cluster Center Calculation Phase?
+     - (B) How did you subdivide the Data Assignment Phase?
+     In both cases mention the shared data involved and how access to it
+     was coordinated to ensure correctness.
+
+  1. Yes. More processors gave clear speedups for all three datasets. For
+     example, on `digits_all_3e4.txt` runtime dropped from 43.36s at 1 proc
+     to about 3.1 at 85 procs.
+  2. The trend is mostly decreasing runtime as processor count increases.
+     The biggest improvements happen early from 1 to 16 to 36. After that, the
+     gains are smaller, and at very high counts there are small fluctuations
+     such as a slight slowdown at 128 versus 85. This is expected from
+     parallel overhead costs when many threads are used.
+  3. I parallelized over data points. Each thread computed partial sums in a
+     private local array for all clusters and dimensions, then those partial
+     sums were reduced into shared cluster sums. After reduction, each cluster
+     sum was divided by its count to get the new center. This avoids races on
+     shared cluster-center values.
+     I then parallelized over data points again. Each thread computed nearest
+     cluster assignments for its own points, while tracking local cluster counts
+     and a local change count. These local totals were merged into shared
+     `clust.counts` and global `nchanges` in a synchronized section, so updates
+     remained correct.
+
+
+Problem 2: kmeans_cuda
+======================
+
+kmeans_cuda Timing Table
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+  Fill in the following table on measuring the performance of your
+  `kmeans_cuda' program on Zaratan. Replace 00.00 entries with your
+  actual run times. You can use the provided `time-kmeans-cuda-slurm.sh'
+  script which, after minor adjustments, should run the serial and CUDA
+  codes on necessary data. INCLUDE THE SLURM JOB OUTPUT FILE IN YOUR
+  SUBMISSION; this will allow graders to verify your times if in doubt.
+
+  The columns are for each of 3 data files that are provided and run in
+  the job script.
+
+  ---------------------------------------------------------------------------
+                                               Data File                     
+   Program        digits_all_5e3.txt  digits_all_1e4.txt  digits_all_3e4.txt 
+  ---------------------------------------------------------------------------
+   kmeans_serial               00.00               00.00               00.00 
+   kmeans_cuda                 00.00               00.00               00.00 
+  ---------------------------------------------------------------------------
+
+
+kmeans_cuda Discussion Questions
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  Analyze your table of results and answer the following questions.
+  1. Did using the GPU result in speedups?
+  2. Describe your general approach on how you used GPU threads/blocks
+     to parallelize the algorithm.
+     - (A) How did you subdivide the Cluster Center Calculation Phase?
+     - (B) How did you subdivide the Data Assignment Phase?
+     Indicate how shared data was coordinated or if some redundant
+     computations were done in order to avoid the need to coordinate.
+  3. Describe the GPU kernels that you wrote and how they are used in
+     the main computation to accomplish speedup.
+
+  It is expected that #2 and #3 will have some overlap: just be
+  reasonably specific about how you designed the computation.
+
+
+Problem 3: Optional kmeans_blas
+===============================
+
+kmeans_blas Timing Table
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+  Fill in the following table on measuring the performance of your
+  `kmeans_blas' program on Zaratan.  Replace 00.00 entries with your
+  actual run times. INCLUDE THE SLURM JOB OUTPUT FILE IN YOUR
+  SUBMISSION; this will allow graders to verify your times if in doubt.
+
+  ---------------------------------------------------------------------------
+                                               Data File                     
+   Program        digits_all_5e3.txt  digits_all_1e4.txt  digits_all_3e4.txt 
+  ---------------------------------------------------------------------------
+   kmeans_serial               00.00               00.00               00.00 
+   kemans_blas                 00.00               00.00               00.00 
+  ---------------------------------------------------------------------------
+
+
+NOTE: Write your own Timing Script
+----------------------------------
+
+  There is NOT a provided timing script / SLURM job for this. It is
+  suggested that you adapt the `time-kmeans-cuda-slurm.sh' script for
+  this to run the plain Serial and BLAS versions of kmeans on 3 datasets
+  in that file. Make sure to modify the options concerning the need for
+  GPUs (they are not needed for the BLAS runs)
+  ,----
+  | ## SELECT PARTITION FOR GPUs  
+  | #SBATCH --partition=gpu    # change to "standard"
+  | #SBATCH --gpus=a100:1      # eliminate option
+  `----
+
+
+kmeans_blas Discussion Questions
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  Analyze your table of results and answer the following questions.
+  1. Did using the BLAS result in speedups? Describe what you see in the
+     table.
+  2. Describe which section of the serial code you used BLAS to address
+     the main computation sections of the algorithm. Indicate which BLAS
+     functions that you used for these two:
+     - (A) BLAS functions for the Cluster Center Calculation Phase
+     - (B) BLAS functions for the Data Assignment Phase
+
+
+Work Disclosure
+===============
+
+  (A) *Human Collaborators:* Aside from the 1-2 people submitting this
+  assignment, the following people contributed ideas and discussion to
+  the completion of this work INCLUDING course staff members. (Write
+  NONE if no collaborators were involved.)
+  - Person 1 <person1@email.com> helped understand Problem X and the
+    meaning of ...
+  - Person 2 <person2@email.com> helped debug Code for Problem Y...
+  - etc.
+
+  (B) *Resource Utilization:* The following resources such as websites,
+  course notes, artificial intelligence tools (LLMs/ChatBots/etc.) were
+  utilized in the completion of this work. Include course materials such
+  as textbooks and lecture slides as well. (Write NONE if no resources
+  were used [which would be hard to believe]).
+  - Resource 1 is here <https://some.resource.org/useful_stuff.html> and
+    provided help for Problem Z to understand ....
+  - Resource 2 is the book "Parallel Analysis" by Auth Or with chapter 8
+    helping a lot with Problem W
+  - Resource 3 is here <https://airegurgitator.com> and provided AI
+    refinements for the writing of problem Q and helped debug code for
+    Problem N.
+  - etc.
+
+  (C) *Ownership of Work*: I / We affirm that all parties listed below
+  have contributed to each solution presented in this document.  All
+  parties are capable of describing how the solutions were derived, how
+  they apply to the problem, and that they were created in accordance
+  with the course's PRIME DIRECTIVE.
+
+  Signed,
+
+  TYPE NAME(S) OF SUBMITTERS

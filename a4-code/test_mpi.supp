@@ -1,0 +1,379 @@
+# valgrind suppression file for OpenMPI programs; attempts suppress
+# leaks and uninitialized memory errors stemming from OpenMPI or the
+# Linux kernel to focus attention on errors in user programs.
+{
+   <Ignore MPI bug>
+   Memcheck:Leak
+   ...
+   fun:PMPI_Init
+   ...
+}
+{
+   <Ignore MPI bug>
+   Memcheck:Cond
+   ...
+   fun:PMPI_Init
+   ...
+}
+{
+   <Ignore MPI bug>
+   Memcheck:Value8
+   ...
+   fun:PMPI_Init
+   ...
+}
+{
+   <Ignore MPI bug>
+   Memcheck:Param
+   setsockopt(optlen)
+   ...
+   fun:PMPI_Init
+   ...
+}
+{
+   <Ignore MPI bug>
+   Memcheck:Param
+   socketcall.getsockopt(optlen_out)
+   ...
+   fun:PMPI_Init
+   ...
+}
+{
+   <Ignore MPI bug>
+   Memcheck:Param
+   socketcall.getsockopt(optlen)
+   ...
+   fun:PMPI_Init
+   ...
+}
+{
+   <Ignore MPI bug>
+   Memcheck:Addr8
+   ...
+   fun:PMPI_Init
+   ...
+}
+{
+   <Ignore MPI bug>
+   Memcheck:Addr4
+   ...
+   fun:PMPI_Init
+   ...
+}
+{
+   <Ignore MPI bug>
+   Memcheck:Leak
+   ...
+   fun:ompi_mpi_finalize
+   ...
+}
+{
+   <Ignore MPI bug>
+   Memcheck:Addr8
+   ...
+   fun:ompi_mpi_finalize
+   ...
+}
+{
+   <Ignore MPI bug>
+   Memcheck:Leak
+   ...
+   fun:PMPI_Gather
+   ...
+}
+{
+   <Ignore MPI bug>
+   Memcheck:Leak
+   ...
+   fun:PMPI_Gather
+   ...
+}
+{
+   <Ignore MPI bug>
+   Memcheck:Leak
+   ...
+   fun:PMPI_Gatherv
+   ...
+}
+{
+   <Ignore MPI bug>
+   Memcheck:Leak
+   ...
+   fun:PMPI_Scatter
+   ...
+}
+{
+   <Ignore MPI bug>
+   Memcheck:Leak
+   ...
+   fun:PMPI_Scatterv
+   ...
+}
+{
+   <MPI leaks in sendrecv>
+   Memcheck:Leak
+   ...
+   fun:PMPI_Sendrecv
+   ...
+}
+{
+   <MPI leaks in underlying library>
+   Memcheck:Leak
+   ...
+   fun:mca_rcache_base_module_create
+}
+{
+   <MPI Init leaks>
+   Memcheck:Leak
+   ...
+   fun:ompi_mpi_init
+}
+{
+   <MPI Init leaks>
+   Memcheck:Leak
+   ...
+   fun:ompi_mpi_instance_init
+}
+{
+   <dynamic librarly loading>
+   Memcheck:Leak
+   ...
+   fun:dlopen*
+}
+{
+   <clone uninitialized bug>
+   Memcheck:Param
+   writev(vector[...])
+   ...
+   fun:clone
+   ...
+}
+{
+   <clone uninitialized bug>
+   Memcheck:Param
+   writev(vector[1])
+   ...
+   fun:clone
+   ...
+}
+{
+   <kernel leak>
+   Memcheck:Leak
+   ...
+   fun:clone
+}
+{
+   <library leak in OpenMPI>
+   Memcheck:Leak
+   ...
+   obj:/usr/lib/*/*/*/libopen-pal*
+   ...
+}
+{
+   <library leak in OpenMPI>
+   Memcheck:Leak
+   ...
+   obj:/usr/lib/*/libhwloc*
+   ...
+}
+{
+   <library leak in OpenMPI>
+   Memcheck:Leak
+   ...
+   obj:/*/mca_bml_r2.so
+   ...
+}
+{
+   <library leak in OpenMPI>
+   Memcheck:Leak
+   ...
+   obj:/*/mca_pmix_ext3x.so
+   ...
+}
+{
+   <library uninitialized in OpenMPI>
+   Memcheck:Param
+   writev(vector[1])
+   ...
+   fun:PMPI_Init
+   ...
+}
+{
+   <insert_a_suppression_name_here>
+   Memcheck:Leak
+   match-leak-kinds: indirect
+   ...
+   fun:PMIx_Init
+}
+{
+   <insert_a_suppression_name_here>
+   Memcheck:Param
+   writev(vector[1])
+   ...
+   fun:opal_progress_events.isra.0
+}
+
+{
+   <insert_a_suppression_name_here>
+   Memcheck:Leak
+   match-leak-kinds: indirect
+   ...
+   fun:pmix_hwloc_setup_topology
+}
+
+{
+   <insert_a_suppression_name_here>
+   Memcheck:Leak
+   match-leak-kinds: reachable
+   ...
+   fun:_dl_open
+}
+{
+   <insert_a_suppression_name_here>
+   Memcheck:Leak
+   match-leak-kinds: reachable
+   ...
+   fun:_dl_close
+}
+{
+   <library uninitialized in OpenMPI>
+   Memcheck:Cond
+   ...
+   obj:/*/libmpi.so*
+   ...
+}
+{
+   <insert_a_suppression_name_here>
+   Memcheck:Param
+   socketcall.sendto(msg)
+   ...
+   fun:ompi_coll_tuned_bcast_intra_dec_fixed
+}
+{
+   <library uninitialized in OpenMPI>
+   Memcheck:Cond
+   ...
+   obj:/*/libmpi.so*
+   ...
+}
+{
+   <library uninitialized in libpmix>
+   Memcheck:Param
+   writev(vector[1])
+   ...
+   obj:/*/libpmix.so*
+   ...
+}
+{
+   <library OpenMPI: suppress all leaks originating from library calls>
+   Memcheck:Leak
+   ...
+   obj:/*/openmpi/*.so*
+   ...
+}
+
+## OpenMP / GOMP error suppression
+{
+   <library GOMP: suppress all leaks originating from library calls>
+   Memcheck:Leak
+   ...
+   obj:/*/libgomp.so*
+   ...
+}
+
+# {
+#    <library GOMP: suppress all leaks originating from library calls>
+#    Memcheck:Leak
+#    ...
+#    fun:GOMP_parallel
+#    ...
+# }
+# {
+#    <library GOMP: suppress all leaks originating from library calls>
+#    Memcheck:Leak
+#    ...
+#    fun:gomp_init_num_threads
+#    ...
+# }
+
+## Zaratan-Specific Suppressions
+{
+   <UCP Library Problem>
+   Memcheck:Cond
+   ...
+   obj:/*/libucp.so*
+   ...
+}
+{
+   <UCP Library Problem>
+   Memcheck:Value8
+   ...
+   obj:/*/libucp.so*
+   ...
+}
+{
+   <UCP Library Problem>
+   Memcheck:Param
+   mmap(offset)
+   ...
+   obj:/*/libucp.so*
+   ...
+}
+{
+   <UCP Library Problem>
+   Memcheck:Param
+   write(offset)
+   ...
+   obj:/*/libucp.so*
+   ...
+}
+{
+   <UCP Library Problem>
+   Memcheck:Param
+   write(buf)
+   ...
+   obj:/*/libucp.so*
+   ...
+}
+{
+   <UCP Library Problem>
+   Memcheck:Param
+   mmap(offset)
+   ...
+   obj:/*/libuct_ib.so*
+   ...
+}
+{
+   <UCS Library Problem>
+   Memcheck:Leak
+   ...
+   obj:/*/libucs.so*
+   ...
+}
+
+{
+   <UCP Library Problem>
+   Memcheck:Leak
+   ...
+   obj:/*/libucp.so*
+   ...
+}
+{
+   <UCS Library Problem>
+   Memcheck:Value8
+   ...
+   obj:/*/libucs.so*
+   ...
+}
+{
+   <UCS Library Problem>
+   Memcheck:Cond
+   ...
+   obj:/*/libucs.so*
+   ...
+}
+{
+   <UCT Bug>
+   Memcheck:Value8
+   fun:uct_ib_device_async_event_unregister
+}

@@ -1,0 +1,28 @@
+# valgrind suppression file for OpenMP / libgomp programs; attempts
+# suppress leaks and uninitialized memory errors stemming from libgomp
+# or the Linux kernel to focus attention on errors in user programs.
+
+## OpenMP / GOMP error suppression
+{
+   <library GOMP: suppress all leaks originating from library calls>
+   Memcheck:Leak
+   ...
+   obj:/*/libgomp.so*
+   ...
+}
+
+# {
+#    <library GOMP: suppress all leaks originating from library calls>
+#    Memcheck:Leak
+#    ...
+#    fun:GOMP_parallel
+#    ...
+# }
+# {
+#    <library GOMP: suppress all leaks originating from library calls>
+#    Memcheck:Leak
+#    ...
+#    fun:gomp_init_num_threads
+#    ...
+# }
+

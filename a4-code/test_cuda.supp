@@ -1,0 +1,13 @@
+# valgrind suppression file for CUDA programs; attempts
+# suppress leaks and uninitialized memory errors stemming from libcuda
+# or the Linux kernel to focus attention on errors in user programs.
+
+## CUDA error suppression
+{
+   <library CUDA: suppress all leaks originating from library calls>
+   Memcheck:Leak
+   ...
+   obj:/*/libcuda.so*
+   ...
+}
+
