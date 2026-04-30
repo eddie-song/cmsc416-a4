@@ -295,9 +295,11 @@ int main(int argc, char *argv[]) {
       cblas_daxpy(clust->dim, 1.0, data->features[i], 1, clust->features[c], 1);
     }
 
-    for (int c = 0; c < clust->nclust; c++) {    // scale sums into means
-      if (clust->counts[c] > 0)
-        cblas_dscal(clust->dim, 1.0 / clust->counts[c], clust->features[c], 1);
+    for (int c = 0; c < clust->nclust; c++) {   
+      if (clust->counts[c] > 0) {
+        for (int d = 0; d < clust->dim; d++)
+          clust->features[c][d] = clust->features[c][d] / clust->counts[c];
+      }
     }
 
     // DETERMINE NEW CLUSTER ASSIGNMENTS FOR EACH DATA
