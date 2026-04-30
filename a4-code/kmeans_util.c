@@ -22,7 +22,7 @@ int filestats(char *filename, ssize_t *tot_tokens, ssize_t *tot_lines){
   if(fin == NULL){
     printf("Failed to open file '%s'\n",filename);
     return -1;
-  }
+  } 
 
   ssize_t ntokens=0, nlines=0, column=0;
   int intoken=0, token;
