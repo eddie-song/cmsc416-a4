@@ -165,10 +165,8 @@ Work Disclosure
   assignment, the following people contributed ideas and discussion to
   the completion of this work INCLUDING course staff members. (Write
   NONE if no collaborators were involved.)
-  - Person 1 <person1@email.com> helped understand Problem X and the
-    meaning of ...
-  - Person 2 <person2@email.com> helped debug Code for Problem Y...
-  - etc.
+  
+  NONE
 
   (B) *Resource Utilization:* The following resources such as websites,
   course notes, artificial intelligence tools (LLMs/ChatBots/etc.) were
@@ -192,4 +190,4 @@ Work Disclosure
 
   Signed,
 
-  TYPE NAME(S) OF SUBMITTERS
+  Edward Song, Eric Chen, Daniel Wang
