@@ -21,14 +21,14 @@ kmeans_omp Timing Table
                                        Data File                     
    Procs  digits_all_5e3.txt  digits_all_1e4.txt  digits_all_3e4.txt 
   -------------------------------------------------------------------
-      1                2.79               16.94               43.36 
-      4                1.01                4.83               12.62 
-      8                0.72                2.85                7.37 
-     16                0.58                1.90                4.86 
-     36                0.51                1.44                3.56 
-     64                0.52                1.39                3.20 
-     85                0.53                1.24                3.13 
-    128                0.58                1.60                3.22 
+     1                2.79               16.95               43.53 
+     4                1.01                4.83               12.70 
+     8                0.72                2.85                7.43 
+    16                0.62                1.90                4.94 
+    36                0.53                1.44                3.63 
+    64                0.52                1.40                3.24 
+    85                0.53                1.49                3.15 
+   128                0.61                1.60                3.27 
   -------------------------------------------------------------------
 
 
@@ -48,8 +48,8 @@ kmeans_omp Discussion Questions
      was coordinated to ensure correctness.
 
   1. Yes. More processors gave clear speedups for all three datasets. For
-     example, on `digits_all_3e4.txt` runtime dropped from 43.36s at 1 proc
-     to about 3.1 at 85 procs.
+     example, on `digits_all_3e4.txt` runtime dropped from 43.53s at 1 proc
+     to 3.15s at 85 procs.
   2. The trend is mostly decreasing runtime as processor count increases.
      The biggest improvements happen early from 1 to 16 to 36. After that, the
      gains are smaller, and at very high counts there are small fluctuations

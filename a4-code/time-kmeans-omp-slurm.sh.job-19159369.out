@@ -204,7 +204,7 @@ TOT  613  346  316  585  594  476  305  419  571  394  700  648  585  425  398  
 
 Saving cluster labels to file outdirs/outdir_digits_all_1e4.txt_1/labels.txt
 Saving cluster centers to outdirs/outdir_digits_all_1e4.txt_1/cent_0000.pgm ...
-runtime: procs 1 data digits_all_1e4.txt realtime 16.94
+runtime: procs 1 data digits_all_1e4.txt realtime 16.95
 
 
 >> ./kmeans_omp sample-mnist-data/digits_all_3e4.txt 20 outdirs/outdir_digits_all_3e4.txt_1 500
@@ -331,7 +331,7 @@ TOT  983 1602 1255 1939 1320 1586 1609  977 2067  915 1649 1123 1453 1222 2239 1
 
 Saving cluster labels to file outdirs/outdir_digits_all_3e4.txt_1/labels.txt
 Saving cluster centers to outdirs/outdir_digits_all_3e4.txt_1/cent_0000.pgm ...
-runtime: procs 1 data digits_all_3e4.txt realtime 43.36
+runtime: procs 1 data digits_all_3e4.txt realtime 43.53
 
 
 >> ./kmeans_omp sample-mnist-data/digits_all_5e3.txt 20 outdirs/outdir_digits_all_5e3.txt_4 500
@@ -667,7 +667,7 @@ TOT  983 1602 1255 1939 1320 1586 1609  977 2067  915 1649 1123 1453 1222 2239 1
 
 Saving cluster labels to file outdirs/outdir_digits_all_3e4.txt_4/labels.txt
 Saving cluster centers to outdirs/outdir_digits_all_3e4.txt_4/cent_0000.pgm ...
-runtime: procs 4 data digits_all_3e4.txt realtime 12.62
+runtime: procs 4 data digits_all_3e4.txt realtime 12.70
 
 
 >> ./kmeans_omp sample-mnist-data/digits_all_5e3.txt 20 outdirs/outdir_digits_all_5e3.txt_8 500
@@ -1003,7 +1003,7 @@ TOT  983 1602 1255 1939 1320 1586 1609  977 2067  915 1649 1123 1453 1222 2239 1
 
 Saving cluster labels to file outdirs/outdir_digits_all_3e4.txt_8/labels.txt
 Saving cluster centers to outdirs/outdir_digits_all_3e4.txt_8/cent_0000.pgm ...
-runtime: procs 8 data digits_all_3e4.txt realtime 7.37
+runtime: procs 8 data digits_all_3e4.txt realtime 7.43
 
 
 >> ./kmeans_omp sample-mnist-data/digits_all_5e3.txt 20 outdirs/outdir_digits_all_5e3.txt_16 500
@@ -1068,7 +1068,7 @@ TOT  210  226  193  391  229  221  378  318  285  163  218  247  222  297  158  
 
 Saving cluster labels to file outdirs/outdir_digits_all_5e3.txt_16/labels.txt
 Saving cluster centers to outdirs/outdir_digits_all_5e3.txt_16/cent_0000.pgm ...
-runtime: procs 16 data digits_all_5e3.txt realtime 0.58
+runtime: procs 16 data digits_all_5e3.txt realtime 0.62
 
 
 >> ./kmeans_omp sample-mnist-data/digits_all_1e4.txt 20 outdirs/outdir_digits_all_1e4.txt_16 500
@@ -1339,7 +1339,7 @@ TOT  983 1602 1255 1939 1320 1586 1609  977 2067  915 1649 1123 1453 1222 2239 1
 
 Saving cluster labels to file outdirs/outdir_digits_all_3e4.txt_16/labels.txt
 Saving cluster centers to outdirs/outdir_digits_all_3e4.txt_16/cent_0000.pgm ...
-runtime: procs 16 data digits_all_3e4.txt realtime 4.86
+runtime: procs 16 data digits_all_3e4.txt realtime 4.94
 
 
 >> ./kmeans_omp sample-mnist-data/digits_all_5e3.txt 20 outdirs/outdir_digits_all_5e3.txt_36 500
@@ -1404,7 +1404,7 @@ TOT  210  226  193  391  229  221  378  318  285  163  218  247  222  297  158  
 
 Saving cluster labels to file outdirs/outdir_digits_all_5e3.txt_36/labels.txt
 Saving cluster centers to outdirs/outdir_digits_all_5e3.txt_36/cent_0000.pgm ...
-runtime: procs 36 data digits_all_5e3.txt realtime 0.51
+runtime: procs 36 data digits_all_5e3.txt realtime 0.53
 
 
 >> ./kmeans_omp sample-mnist-data/digits_all_1e4.txt 20 outdirs/outdir_digits_all_1e4.txt_36 500
@@ -1675,7 +1675,7 @@ TOT  983 1602 1255 1939 1320 1586 1609  977 2067  915 1649 1123 1453 1222 2239 1
 
 Saving cluster labels to file outdirs/outdir_digits_all_3e4.txt_36/labels.txt
 Saving cluster centers to outdirs/outdir_digits_all_3e4.txt_36/cent_0000.pgm ...
-runtime: procs 36 data digits_all_3e4.txt realtime 3.56
+runtime: procs 36 data digits_all_3e4.txt realtime 3.63
 
 
 >> ./kmeans_omp sample-mnist-data/digits_all_5e3.txt 20 outdirs/outdir_digits_all_5e3.txt_64 500
@@ -1884,7 +1884,7 @@ TOT  613  346  316  585  594  476  305  419  571  394  700  648  585  425  398  
 
 Saving cluster labels to file outdirs/outdir_digits_all_1e4.txt_64/labels.txt
 Saving cluster centers to outdirs/outdir_digits_all_1e4.txt_64/cent_0000.pgm ...
-runtime: procs 64 data digits_all_1e4.txt realtime 1.39
+runtime: procs 64 data digits_all_1e4.txt realtime 1.40
 
 
 >> ./kmeans_omp sample-mnist-data/digits_all_3e4.txt 20 outdirs/outdir_digits_all_3e4.txt_64 500
@@ -2011,7 +2011,7 @@ TOT  983 1602 1255 1939 1320 1586 1609  977 2067  915 1649 1123 1453 1222 2239 1
 
 Saving cluster labels to file outdirs/outdir_digits_all_3e4.txt_64/labels.txt
 Saving cluster centers to outdirs/outdir_digits_all_3e4.txt_64/cent_0000.pgm ...
-runtime: procs 64 data digits_all_3e4.txt realtime 3.20
+runtime: procs 64 data digits_all_3e4.txt realtime 3.24
 
 
 >> ./kmeans_omp sample-mnist-data/digits_all_5e3.txt 20 outdirs/outdir_digits_all_5e3.txt_85 500
@@ -2220,7 +2220,7 @@ TOT  613  346  316  585  594  476  305  419  571  394  700  648  585  425  398  
 
 Saving cluster labels to file outdirs/outdir_digits_all_1e4.txt_85/labels.txt
 Saving cluster centers to outdirs/outdir_digits_all_1e4.txt_85/cent_0000.pgm ...
-runtime: procs 85 data digits_all_1e4.txt realtime 1.24
+runtime: procs 85 data digits_all_1e4.txt realtime 1.49
 
 
 >> ./kmeans_omp sample-mnist-data/digits_all_3e4.txt 20 outdirs/outdir_digits_all_3e4.txt_85 500
@@ -2347,7 +2347,7 @@ TOT  983 1602 1255 1939 1320 1586 1609  977 2067  915 1649 1123 1453 1222 2239 1
 
 Saving cluster labels to file outdirs/outdir_digits_all_3e4.txt_85/labels.txt
 Saving cluster centers to outdirs/outdir_digits_all_3e4.txt_85/cent_0000.pgm ...
-runtime: procs 85 data digits_all_3e4.txt realtime 3.13
+runtime: procs 85 data digits_all_3e4.txt realtime 3.15
 
 
 >> ./kmeans_omp sample-mnist-data/digits_all_5e3.txt 20 outdirs/outdir_digits_all_5e3.txt_128 500
@@ -2412,7 +2412,7 @@ TOT  210  226  193  391  229  221  378  318  285  163  218  247  222  297  158  
 
 Saving cluster labels to file outdirs/outdir_digits_all_5e3.txt_128/labels.txt
 Saving cluster centers to outdirs/outdir_digits_all_5e3.txt_128/cent_0000.pgm ...
-runtime: procs 128 data digits_all_5e3.txt realtime 0.58
+runtime: procs 128 data digits_all_5e3.txt realtime 0.61
 
 
 >> ./kmeans_omp sample-mnist-data/digits_all_1e4.txt 20 outdirs/outdir_digits_all_1e4.txt_128 500
@@ -2683,6 +2683,6 @@ TOT  983 1602 1255 1939 1320 1586 1609  977 2067  915 1649 1123 1453 1222 2239 1
 
 Saving cluster labels to file outdirs/outdir_digits_all_3e4.txt_128/labels.txt
 Saving cluster centers to outdirs/outdir_digits_all_3e4.txt_128/cent_0000.pgm ...
-runtime: procs 128 data digits_all_3e4.txt realtime 3.22
+runtime: procs 128 data digits_all_3e4.txt realtime 3.27
 
 
