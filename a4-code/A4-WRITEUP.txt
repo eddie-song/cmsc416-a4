@@ -48,7 +48,7 @@ kmeans_omp Discussion Questions
      was coordinated to ensure correctness.
 
   1. Yes. More processors gave clear speedups for all three datasets. For
-     example, on `digits_all_3e4.txt` runtime dropped from 43.53s at 1 proc
+     example, on digits_all_3e4.txt runtime dropped from 43.53s at 1 proc
      to 3.15s at 85 procs.
   2. The trend is mostly decreasing runtime as processor count increases.
      The biggest improvements happen early from 1 to 16 to 36. After that, the
@@ -87,8 +87,8 @@ kmeans_cuda Timing Table
                                                Data File                     
    Program        digits_all_5e3.txt  digits_all_1e4.txt  digits_all_3e4.txt 
   ---------------------------------------------------------------------------
-   kmeans_serial               00.00               00.00               00.00 
-   kmeans_cuda                 00.00               00.00               00.00 
+   kmeans_serial                2.55               16.59               42.31
+   kmeans_cuda                  1.05                2.28                2.28
   ---------------------------------------------------------------------------
 
 
@@ -97,17 +97,119 @@ kmeans_cuda Discussion Questions
 
   Analyze your table of results and answer the following questions.
   1. Did using the GPU result in speedups?
+
+     Yes, and the speedup grows with data size:
+
+       5e3 :  2.55s / 1.05s = 2.4x
+       1e4 : 16.59s / 2.28s = 7.3x
+       3e4 : 42.31s / 2.28s = 18.6x
+
+     The serial runtime grows roughly linearly with ndata (and with
+     the iteration count, which also grows on the larger files). The
+     CUDA runtime is essentially flat between 1e4 and 3e4 (both
+     2.28s) because at these sizes the per-iteration kernel-launch
+     and host<->device memcpy overhead (copying nchanges and counts
+     back each iteration) dominates over the compute work itself.
+     Tripling the data is absorbed in the noise. This is a common 
+     characteristic of GPUs where small problems are not worth the 
+     transfer/launch overhead, but the speedup widens fast as the 
+     compute side scales.
+
+
   2. Describe your general approach on how you used GPU threads/blocks
      to parallelize the algorithm.
-     - (A) How did you subdivide the Cluster Center Calculation Phase?
-     - (B) How did you subdivide the Data Assignment Phase?
-     Indicate how shared data was coordinated or if some redundant
-     computations were done in order to avoid the need to coordinate.
+
+     The host loads the data once, flattens the (ndata x dim) feature
+     matrix and the (nclust x dim) centers matrix to row-major 1D
+     buffers, and ships the data, initial assignments, and initial
+     counts to the GPU one time. After that, each iteration of the
+     k-means loop is three consecutive kernel launches plus a small
+     cudaMemcpy of nchanges and counts back to the host (so the host
+     can print the iteration line and check for convergence). The data
+     features array never moves between host and device after the
+     initial copy. Centers and assignments live on the device for
+     the whole loop and are only copied back at the end (for the PGM
+     files and the confusion matrix).
+
+     Threads-per-block is fixed at 256. The number of blocks is
+     chosen per-kernel based on which axis the kernel parallelizes
+     over (see below).
+
+     (A) Cluster Center Calculation Phase:
+
+       We used the lecture's "1 thread per output cell" pattern from
+       the matrix-multiply slides. There are nclust*dim output
+       cells, so we launch ceil(nclust*dim / 256) blocks of 256
+       threads. Thread tid maps to cluster c = tid / dim and
+       dimension d = tid % dim. That thread loops over all ndata
+       points and accumulates data[i*dim + d] for every i where
+       assigns[i] == c, then divides by counts[c] at the end.
+
+       There was no coordination. Each thread writes exactly one output
+       cell and no other thread writes that cell, so there are no
+       atomics, no critical sections, and no __syncthreads() needed.
+       The "redundant computation" is that every thread re-reads the
+       full assigns[] array which is the cost of avoiding atomics on
+       a complex multi-thread reduction. With nclust*dim ~= 15,680
+       threads on an A100 and ndata up to 30,000 inner-loop
+       iterations per thread, the GPU's compute is well utilized.
+
+       Something to note: Because every thread sums the same
+       subset of points in the same index order (i = 0..ndata-1) as
+       the serial code, the floating-point result is bit-identical
+       to the serial output.
+
+     (B) Data Assignment Phase:
+
+       There is 1 thread per data point. ceil(ndata / 256) blocks of
+       256 threads are launched. Thread i computes the squared distance from
+       data[i] to every cluster center using the same nested-loop
+       structure as the serial code, finds the best cluster, writes
+       its own assigns[i] (there is no race as each thread owns its own i), and
+       then atomicAdds 1 to counts[best_clust] and atomicAdds 1 to
+       a global nchanges counter if its assignment flipped.
+
+       integer atomicAdd on counts[] (size nclust ~ 20)
+       and on the single nchanges scalar. Integer atomicAdd is
+       order-independent so the result is deterministic. The
+       distance computation itself uses the same inner-loop order as
+       serial, so distances are also bit-exact, which makes
+       tie-breaking identical to the serial implementation.
+
   3. Describe the GPU kernels that you wrote and how they are used in
      the main computation to accomplish speedup.
 
-  It is expected that #2 and #3 will have some overlap: just be
-  reasonably specific about how you designed the computation.
+     - kernel_compute_centers(ndata, dim, nclust, d_data, d_assigns,
+       d_counts, d_centers)
+         One thread per (cluster, dim) cell as described in the 
+         Cluster Center Calculation Phase of question 2.
+         Computes sum_{i: assigns[i]==c} data[i*dim + d] and divides
+         by counts[c]. This kernel both zeroes (sum starts at 0.0
+         locally) and accumulates and divides in a single pass --
+         the sum, divide, and zero-empty-cluster cases from the
+         serial loop are fused into one kernel call.
+
+     - kernel_zero_ints(arr, n)
+         A tiny kernel that writes 0 to each entry. Used to reset
+         counts[] each iteration before the assignment kernel runs.
+         (nchanges is reset with cudaMemset, which is cheaper than a
+         kernel launch for a single int.)
+
+     - kernel_assign(ndata, dim, nclust, d_data, d_centers,
+       d_assigns, d_counts, d_nchanges)
+         One thread per data point. Distance computation, best-
+         cluster pick, write-back of assigns[i], and atomicAdds on
+         counts[best_clust] and nchanges as described in the 
+         Data Assignment Phase of Question 2.
+
+     The speedup comes from both: (i) the center kernel's nclust*dim ~ 15,680 
+     independent threads each doing ndata-length sums in parallel replacing the 
+     serial version's double nested loop, and (ii) the assign kernel's ndata 
+     threads each doing their own nclust*dim distance computation replacing another
+     serial double loop. The data array stays on the GPU the whole
+     run, so the only host-device traffic per iteration is two
+     small ints worth of state (nchanges + counts), which keeps the
+     loop overhead bounded.
 
 
 Problem 3: Optional kmeans_blas
@@ -125,8 +227,8 @@ kmeans_blas Timing Table
                                                Data File                     
    Program        digits_all_5e3.txt  digits_all_1e4.txt  digits_all_3e4.txt 
   ---------------------------------------------------------------------------
-   kmeans_serial               00.00               00.00               00.00 
-   kemans_blas                 00.00               00.00               00.00 
+   kmeans_serial               02.70               16.81               43.88
+   kemans_blas                 01.18                07.19              24.16
   ---------------------------------------------------------------------------
 
 
@@ -150,12 +252,41 @@ kmeans_blas Discussion Questions
 
   Analyze your table of results and answer the following questions.
   1. Did using the BLAS result in speedups? Describe what you see in the
-     table.
+     Table.
+Using BLAS did result in speedups across all test cases. For
+ digits_all_5e3.txt, the runtime improved from 2.70 seconds to 1.18
+ seconds, giving a speedup of about 2.29x. For digits_all_1e4.txt, the
+ runtime improved from 16.81 seconds to 7.19 seconds, giving a speedup of
+ about 2.34x. For digits_all_3e4.txt, the runtime improved from 43.88
+ seconds to 24.16 seconds, giving a speedup of about 1.82x. As we can see, speedup was most impactful for 5e3 and 1e4 data sets. It may not be as impact for 3e4 due to additional overhead from vector BLAS calls.
+
+	
+		
+
+
+
+
   2. Describe which section of the serial code you used BLAS to address
      the main computation sections of the algorithm. Indicate which BLAS
      functions that you used for these two:
      - (A) BLAS functions for the Cluster Center Calculation Phase
+	
+
+  In the cluster center calculation phase, I used BLAS when accumulating
+  data points into their assigned cluster centers. In the serial version,
+  this phase uses an inner loop over all dimensions to add each feature of a
+  data point into the corresponding feature of the cluster sum. In the BLAS
+  version, I replaced that feature by feature addition with cblas_daxpy.
+
+  For each data point i, the code finds its assigned cluster c and performs clust->features[c] += data->features[i]  using cblas_daxpy. After all data points have been added into the cluster
+  sums, the code divides each cluster center by its count to compute the
+  average. That final division step is still done with a regular loop.
+
+
      - (B) BLAS functions for the Data Assignment Phase
+
+ Here, we used BLAS to compute the squared Euclidean distance between each data point and each cluster center. The serial version manually subtracts feature values and accumulates the
+  sum of squared differences. In the BLAS version, this work is split into BLAS vector operations. cblas_dcopy copies the current data point's feature vector into a temporary vector called, cblas_daxpy subtracts the cluster  center from that temporary vector, and cblas_ddot computes the dot product of diffs with itself resulting in the squared Euclidean distance. The code repeats this for each cluster and chooses the cluster with the smallest squared distance as the new assignment for that data point.
 
 
 Work Disclosure
@@ -173,14 +304,13 @@ Work Disclosure
   utilized in the completion of this work. Include course materials such
   as textbooks and lecture slides as well. (Write NONE if no resources
   were used [which would be hard to believe]).
-  - Resource 1 is here <https://some.resource.org/useful_stuff.html> and
-    provided help for Problem Z to understand ....
-  - Resource 2 is the book "Parallel Analysis" by Auth Or with chapter 8
-    helping a lot with Problem W
-  - Resource 3 is here <https://airegurgitator.com> and provided AI
-    refinements for the writing of problem Q and helped debug code for
-    Problem N.
-  - etc.
+
+We referred to the lecture slides (Shared Memory Architectures, Threads and OpenMP, Open Multi-Processing (OpenMP), GPU Architecture and CUDA Programming) for all coding and write up parts
+We utilized ChatGPT model 5.4 to ask clarifying questions about
+Viable blas functions for speeding up the serial code regarding loops and vector functions
+		Example prompt: What does cblas_daxpy do and provide an example of its usage relative to serial c code.
+We utilized ChatGPT model 5.4 about Zaratan file upload and download commands
+Example prompt: what is the command to upload a folder to zaratan. Answer: scp -r “folder path” <username>@login.zaratan.umd.edu
 
   (C) *Ownership of Work*: I / We affirm that all parties listed below
   have contributed to each solution presented in this document.  All
@@ -191,3 +321,5 @@ Work Disclosure
   Signed,
 
   Edward Song, Eric Chen, Daniel Wang
+
+
