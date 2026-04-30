@@ -1,153 +1,245 @@
-// kmeans_omp.c
-// C port of the provided kmeans.py program.
+// usage: kmeans <datafile> <nclust> [savedir] [maxiter]
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
-#include <sys/stat.h>
 #include <float.h>
-#include <sys/types.h>
-#include <stddef.h>
+#include <errno.h>
 #include <omp.h>
-
-#ifndef _SSIZE_T_DEFINED
-typedef ptrdiff_t ssize_t;
-#define _SSIZE_T_DEFINED
-#endif
-
-// Provided in kmeans_util.c
-int filestats(char *filename, ssize_t *tot_tokens, ssize_t *tot_lines);
 
 // Data set to be clustered
 typedef struct {
-  int ndata;        // count of data
-  int dim;          // dimension of features
-  double *features; // flat array: ndata x dim
-  int *assigns;     // cluster assignment for each data point
-  int *labels;      // label for each data point
-  int nlabels;      // max label + 1
+  int    ndata;       // count of data
+  int    dim;         // dimension of features for data
+  double **features;  // pointers to individual features
+  int    *assigns;    // cluster to which data is assigned
+  int    *labels;     // label for data if available
+  int    nlabels;     // max value of labels +1, number 0,1,...,nlabel0
 } KMData;
 
 // Cluster information
 typedef struct {
-  int nclust;       // number of clusters
-  int dim;          // dimension of features
-  double *features; // flat array: nclust x dim
-  int *counts;      // number of data points in each cluster
+  int    nclust;      // number of clusters, the "k" in kmeans
+  int    dim;         // dimension of features for data
+  double **features;  // 2D indexing for individual cluster center features
+  int    *counts;     // number of data in each cluster
 } KMClust;
 
-// Load data from file. Format per line: label : feat0 feat1 feat2 ...
-KMData kmdata_load(char *datafile){
-  KMData data;
-  data.ndata = 0;
-  data.dim = 0;
-
-  ssize_t tot_tokens, tot_lines;
-  filestats(datafile, &tot_tokens, &tot_lines);
-  data.ndata = (int)tot_lines;
-
-  // tokens per line = 1 (label) + 1 (:) + dim
-  int tokens_per_line = (int)(tot_tokens / tot_lines);
-  data.dim = tokens_per_line - 2;  // subtract label and colon
-
-  data.features = malloc(sizeof(double) * data.ndata * data.dim);
-  data.labels   = malloc(sizeof(int) * data.ndata);
-  data.assigns  = malloc(sizeof(int) * data.ndata);
-
-  FILE *fin = fopen(datafile, "r");
-  for(int i = 0; i < data.ndata; i++){
-    int label;
-    char colon;
-    fscanf(fin, "%d %c", &label, &colon);
-    data.labels[i] = label;
-    for(int d = 0; d < data.dim; d++){
-      fscanf(fin, "%lf", &data.features[i * data.dim + d]);
-    }
+static int count_lines(const char *filename) {
+  FILE *f = fopen(filename, "r");
+  if (!f) {
+    fprintf(stderr, "ERROR: cannot open file '%s': %s\n", filename, strerror(errno));
+    exit(1);
   }
-  fclose(fin);
-
-  // Compute nlabels = max label + 1
-  data.nlabels = 0;
-  for(int i = 0; i < data.ndata; i++){
-    if(data.labels[i] + 1 > data.nlabels){
-      data.nlabels = data.labels[i] + 1;
-    }
+  int count = 0;
+  char buf[65536];
+  while (fgets(buf, sizeof(buf), f)) {
+    count++;
   }
+  fclose(f);
+  return count;
+}
+
+static int count_dim(const char *filename) {
+  FILE *f = fopen(filename, "r");
+  if (!f) {
+    fprintf(stderr, "ERROR: cannot open file '%s': %s\n", filename, strerror(errno));
+    exit(1);
+  }
+  char buf[65536];
+  if (!fgets(buf, sizeof(buf), f)) {
+    fprintf(stderr, "ERROR: empty data file '%s'\n", filename);
+    fclose(f);
+    exit(1);
+  }
+  fclose(f);
+
+  int dim = 0;
+  char *tok = strtok(buf, " \t\n\r");  // label
+  tok = strtok(NULL, " \t\n\r");        // colon ":"
+  while ((tok = strtok(NULL, " \t\n\r")) != NULL) {
+    dim++;
+  }
+  return dim;
+}
+
+// Load a data set from the named file. Data should be formatted as a
+// text file as:
+//
+// 7 :  84 185 159 151  60  36   0   0   0   0   0   0
+// 2 :   0  77 251 210  25   0   0   0 122 248 253  65
+// 1 :   0   0   0   0   0   0   0   0   0  45 244 150
+// 0 :   0   0   0   0 110 190 251 251 251 253 169 109
+// 4 :   0   0   0   4 195 231   0   0   0   0   0   0
+// 1 :   0   0   0   0   0   0   0   0   0  81 254 254
+// 4 :   0  20 189 253 147   0   0   0   0   0   0   0
+// 9 :   0   0   0   0  91 224 253 253  19   0   0   0
+// 5 :   0   0   0   0   0   0  63 253 253 253 253 253
+// 9 :   0   0   0   0   0   0   0  36  56 137 201 199
+//
+// with the lead number being an optional correct label for the data
+// and remaining numbers being floating point values that are space
+// separated which are the feature vector for each data. The abve
+// example does not have any fractional values for features but it
+// could.
+KMData *kmdata_load(const char *datafile) {
+  int ndata = count_lines(datafile);
+  int dim   = count_dim(datafile);
+
+  KMData *data = malloc(sizeof(KMData));
+  if (!data) { perror("malloc"); exit(1); }
+
+  data->ndata = ndata;
+  data->dim   = dim;
+
+  data->features = malloc(sizeof(double *) * ndata);
+  data->labels   = malloc(sizeof(int) * ndata);
+  data->assigns  = malloc(sizeof(int) * ndata);
+  if (!data->features || !data->labels || !data->assigns) {
+    perror("malloc"); exit(1);
+  }
+  for (int i = 0; i < ndata; i++) {
+    data->features[i] = malloc(sizeof(double) * dim);
+    if (!data->features[i]) { perror("malloc"); exit(1); }
+  }
+
+  FILE *f = fopen(datafile, "r");
+  if (!f) {
+    fprintf(stderr, "ERROR: cannot open file '%s': %s\n", datafile, strerror(errno));
+    exit(1);
+  }
+
+  char buf[65536];
+  int idx = 0;
+  while (fgets(buf, sizeof(buf), f) && idx < ndata) {
+    char *tok = strtok(buf, " \t\n\r");   // label
+    data->labels[idx] = atoi(tok);
+    tok = strtok(NULL, " \t\n\r");          // colon ":"
+
+    for (int d = 0; d < dim; d++) {
+      tok = strtok(NULL, " \t\n\r");
+      if (tok) {
+        data->features[idx][d] = atof(tok);
+      } else {
+        data->features[idx][d] = 0.0;
+      }
+    }
+    idx++;
+  }
+  fclose(f);
+
+  int maxlabel = 0;
+  for (int i = 0; i < ndata; i++) {
+    if (data->labels[i] > maxlabel)
+      maxlabel = data->labels[i];
+  }
+  data->nlabels = maxlabel + 1;
 
   return data;
 }
 
-// Allocate and initialize cluster struct
-KMClust kmclust_new(int nclust, int dim){
-  KMClust clust;
-  clust.nclust = nclust;
-  clust.dim = dim;
-  clust.features = malloc(sizeof(double) * nclust * dim);
-  clust.counts   = malloc(sizeof(int) * nclust);
-  for(int c = 0; c < nclust; c++){
-    clust.counts[c] = 0;
-    for(int d = 0; d < dim; d++){
-      clust.features[c * dim + d] = 0.0;
-    }
+void kmdata_free(KMData *data) {
+  if (!data) return;
+  for (int i = 0; i < data->ndata; i++)
+    free(data->features[i]);
+  free(data->features);
+  free(data->assigns);
+  free(data->labels);
+  free(data);
+}
+
+// Allocate space for clusters in an object
+KMClust *kmclust_new(int nclust, int dim) {
+  KMClust *clust = malloc(sizeof(KMClust));
+  if (!clust) { perror("malloc"); exit(1); }
+
+  clust->nclust = nclust;
+  clust->dim    = dim;
+
+  clust->features = malloc(sizeof(double *) * nclust);
+  clust->counts   = malloc(sizeof(int) * nclust);
+  if (!clust->features || !clust->counts) {
+    perror("malloc"); exit(1);
   }
+
+  for (int c = 0; c < nclust; c++) {
+    clust->features[c] = calloc(dim, sizeof(double));
+    if (!clust->features[c]) { perror("calloc"); exit(1); }
+    clust->counts[c] = 0;
+  }
+
   return clust;
 }
 
-// Save cluster centers as PGM image files
-void save_pgm_files(KMClust *clust, char *savedir){
+void kmclust_free(KMClust *clust) {
+  if (!clust) return;
+  for (int c = 0; c < clust->nclust; c++)
+    free(clust->features[c]);
+  free(clust->features);
+  free(clust->counts);
+  free(clust);
+}
+
+// Save clust centers in the PGM (portable gray map) image format;
+// plain text and can be displayed in many image viewers. File names re
+// cent_0000.pgm and so on.
+void save_pgm_files(KMClust *clust, const char *savedir) {
   int dim_root = (int)sqrt((double)clust->dim);
-  if(clust->dim % dim_root != 0){
+  if (clust->dim % dim_root != 0)      // check if this looks like a square image
     return;
-  }
+
   printf("Saving cluster centers to %s/cent_0000.pgm ...\n", savedir);
 
-  // Find max feature value across all cluster centers
   double maxfeat = 0.0;
-  for(int c = 0; c < clust->nclust; c++){
-    for(int d = 0; d < clust->dim; d++){
-      if(clust->features[c * clust->dim + d] > maxfeat){
-        maxfeat = clust->features[c * clust->dim + d];
-      }
+  for (int c = 0; c < clust->nclust; c++) {
+    for (int d = 0; d < clust->dim; d++) {
+      if (clust->features[c][d] > maxfeat)
+        maxfeat = clust->features[c][d];
     }
   }
 
-  for(int c = 0; c < clust->nclust; c++){
-    char outfile[512];
+  for (int c = 0; c < clust->nclust; c++) {
+    char outfile[1024];
     snprintf(outfile, sizeof(outfile), "%s/cent_%04d.pgm", savedir, c);
     FILE *pgm = fopen(outfile, "w");
-    fprintf(pgm, "P2\n");
-    fprintf(pgm, "%d %d\n", dim_root, dim_root);
-    fprintf(pgm, "%.0f\n", maxfeat);
-    for(int d = 0; d < clust->dim; d++){
-      if(d > 0 && d % dim_root == 0){
+    if (!pgm) {
+      fprintf(stderr, "WARNING: cannot open '%s' for writing: %s\n", outfile, strerror(errno));
+      continue;
+    }
+    fprintf(pgm, "P2\n");                           // output the cluster centers as
+    fprintf(pgm, "%d %d\n", dim_root, dim_root);    // pgm files, a simple image format which
+    fprintf(pgm, "%.0f\n", maxfeat);                // can be viewed in most image
+    for (int d = 0; d < clust->dim; d++) {           // viewers to show how the cluster center
+      if (d > 0 && d % dim_root == 0)
         fprintf(pgm, "\n");
-      }
-      fprintf(pgm, "%3.0f ", clust->features[c * clust->dim + d]);
+      fprintf(pgm, "%3.0f ", clust->features[c][d]);
     }
     fprintf(pgm, "\n");
     fclose(pgm);
   }
 }
 
-int main(int argc, char **argv){
-  if(argc < 3){
-    printf("usage: %s <datafile> <nclust> [savedir] [maxiter]\n", argv[0]);
+//// MAIN FUNCTION ////
+int main(int argc, char *argv[]) {
+  if (argc < 3) {
+    fprintf(stderr, "usage: kmeans <datafile> <nclust> [savedir] [maxiter]\n");
     return 1;
   }
 
-  char *datafile = argv[1];
+  const char *datafile = argv[1];
   int nclust = atoi(argv[2]);
-  char *savedir = ".";
-  int MAXITER = 100;
+  const char *savedir = ".";
+  int MAXITER = 100;                        // bounds the iterations
 
-  if(argc > 3){
+  if (argc > 3) {                           // create save directory if specified
     savedir = argv[3];
-    char cmd[512];
+    char cmd[1024];
     snprintf(cmd, sizeof(cmd), "mkdir -p %s", savedir);
     system(cmd);
   }
-  if(argc > 4){
+
+  if (argc > 4) {
     MAXITER = atoi(argv[4]);
   }
 
@@ -156,190 +248,200 @@ int main(int argc, char **argv){
   printf("nclust: %d\n", nclust);
   printf("savedir: %s\n", savedir);
 
-  KMData data = kmdata_load(datafile);
-  KMClust clust = kmclust_new(nclust, data.dim);
+  // read in the data file, allocate cluster space
+  KMData  *data  = kmdata_load(datafile);
+  KMClust *clust = kmclust_new(nclust, data->dim);
 
-  printf("ndata: %d\n", data.ndata);
-  printf("dim: %d\n", data.dim);
+  printf("ndata: %d\n", data->ndata);
+  printf("dim: %d\n", data->dim);
   printf("\n");
 
-  // Initial cluster assignment: round-robin
-  for(int i = 0; i < data.ndata; i++){
-    data.assigns[i] = i % nclust;
+  // random, regular initial cluster assignment
+  for (int i = 0; i < data->ndata; i++) {
+    int c = i % clust->nclust;
+    data->assigns[i] = c;
   }
 
-  // Initial cluster counts
-  for(int c = 0; c < nclust; c++){
-    int icount = data.ndata / nclust;
-    int extra = (c < (data.ndata % nclust)) ? 1 : 0;
-    clust.counts[c] = icount + extra;
+  for (int c = 0; c < clust->nclust; c++) {
+    int icount = data->ndata / clust->nclust;   // IMPORTANT: use integer division
+    int extra = 0;
+    if (c < (data->ndata % clust->nclust))
+      extra = 1;                                 // extras in earlier clusters
+    clust->counts[c] = icount + extra;
   }
 
-  // Main K-means loop
-  int curiter = 1;
-  int nchanges = data.ndata;
+  //////////////////////////////////////////////////////////////////////////////
+  // THE MAIN ALGORITHM
+  int curiter  = 1;                              // current iteration
+  int nchanges = data->ndata;                    // check for changes in cluster assignment; 0 is converged
   printf("==CLUSTERING: MAXITER %d==\n", MAXITER);
   printf("ITER NCHANGE CLUST_COUNTS\n");
 
-  while(nchanges > 0 && curiter <= MAXITER){
-    size_t feat_sz = (size_t)nclust * data.dim;
+  while (nchanges > 0 && curiter <= MAXITER) {   // loop until convergence
 
-    // Reset cluster centers to 0
-    memset(clust.features, 0, feat_sz * sizeof(double));
+    // DETERMINE NEW CLUSTER CENTERS
+    for (int c = 0; c < clust->nclust; c++)     // reset cluster centers to 0.0
+      for (int d = 0; d < clust->dim; d++)
+        clust->features[c][d] = 0.0;
 
-    // Sum features for each cluster (parallel reduction via thread-local buffers)
     int nthreads = omp_get_max_threads();
-    double *local_sums = calloc((size_t)nthreads * feat_sz, sizeof(double));
+    size_t sumsz = (size_t)nthreads * clust->nclust * clust->dim;
+    double *local_sums = calloc(sumsz, sizeof(double));
+    if (!local_sums) { perror("calloc"); exit(1); }
 
 #pragma omp parallel
     {
       int tid = omp_get_thread_num();
-      double *my_sums = &local_sums[(size_t)tid * feat_sz];
+      double *my_sums = &local_sums[(size_t)tid * clust->nclust * clust->dim];
 
 #pragma omp for schedule(static)
-      for(int i = 0; i < data.ndata; i++){
-        int c = data.assigns[i];
-        double *sum_base = &my_sums[(size_t)c * data.dim];
-        for(int d = 0; d < data.dim; d++){
-          sum_base[d] += data.features[(size_t)i * data.dim + d];
-        }
+      for (int i = 0; i < data->ndata; i++) {      // sum up data in each cluster
+        int c = data->assigns[i];
+        double *cluster_sum = &my_sums[(size_t)c * clust->dim];
+        for (int d = 0; d < clust->dim; d++)
+          cluster_sum[d] += data->features[i][d];
       }
     }
 
-    for(int t = 0; t < nthreads; t++){
-      double *thread_sums = &local_sums[(size_t)t * feat_sz];
-      for(size_t idx = 0; idx < feat_sz; idx++){
-        clust.features[idx] += thread_sums[idx];
+    for (int t = 0; t < nthreads; t++) {
+      double *src = &local_sums[(size_t)t * clust->nclust * clust->dim];
+      for (int c = 0; c < clust->nclust; c++) {
+        for (int d = 0; d < clust->dim; d++) {
+          clust->features[c][d] += src[(size_t)c * clust->dim + d];
+        }
       }
     }
     free(local_sums);
 
-    // Divide by count to get mean
 #pragma omp parallel for schedule(static)
-    for(int c = 0; c < nclust; c++){
-      if(clust.counts[c] > 0){
-        for(int d = 0; d < data.dim; d++){
-          clust.features[c * data.dim + d] /= clust.counts[c];
-        }
+    for (int c = 0; c < clust->nclust; c++) {    // divide by ndatas of data to get mean of cluster center
+      if (clust->counts[c] > 0) {
+        for (int d = 0; d < clust->dim; d++)
+          clust->features[c][d] = clust->features[c][d] / clust->counts[c];
       }
     }
 
-    // Reset cluster counts
-    memset(clust.counts, 0, (size_t)nclust * sizeof(int));
+    // DETERMINE NEW CLUSTER ASSIGNMENTS FOR EACH DATA
+    for (int c = 0; c < clust->nclust; c++)      // reset cluster counts to 0
+      clust->counts[c] = 0;                     // re-init here to support first iteration
 
-    // Assign each data point to nearest cluster
     nchanges = 0;
 #pragma omp parallel
     {
-      int *local_counts = calloc(nclust, sizeof(int));
+      int *local_counts = calloc(clust->nclust, sizeof(int));
       int local_changes = 0;
+      if (!local_counts) { perror("calloc"); exit(1); }
 
 #pragma omp for schedule(static)
-      for(int i = 0; i < data.ndata; i++){
-        int best_clust = 0;
+      for (int i = 0; i < data->ndata; i++) {       // iterate over all data
+        int    best_clust  = -1;
         double best_distsq = DBL_MAX;
-        for(int c = 0; c < nclust; c++){
+        for (int c = 0; c < clust->nclust; c++) {   // compare data to each cluster and assign to closest
           double distsq = 0.0;
-          for(int d = 0; d < data.dim; d++){
-            double diff = data.features[i * data.dim + d] - clust.features[c * data.dim + d];
+          for (int d = 0; d < clust->dim; d++) {     // calculate squared distance to each data dimension
+            double diff = data->features[i][d] - clust->features[c][d];
             distsq += diff * diff;
           }
-          if(distsq < best_distsq){
-            best_clust = c;
+          if (distsq < best_distsq) {               // if closer to this cluster than current best
+            best_clust  = c;
             best_distsq = distsq;
           }
         }
-        local_counts[best_clust]++;
-        if(best_clust != data.assigns[i]){
-          local_changes++;
-          data.assigns[i] = best_clust;
+        local_counts[best_clust] += 1;
+        if (best_clust != data->assigns[i]) {       // assigning data to a different cluster?
+          local_changes += 1;                        // indicate cluster assignment has changed
+          data->assigns[i] = best_clust;             // assign to new cluster
         }
       }
 
 #pragma omp critical
       {
-        for(int c = 0; c < nclust; c++){
-          clust.counts[c] += local_counts[c];
-        }
+        for (int c = 0; c < clust->nclust; c++)
+          clust->counts[c] += local_counts[c];
         nchanges += local_changes;
       }
+
       free(local_counts);
     }
 
-    // Print iteration info
+    // Print iteration information at the end of the iter
     printf("%3d: %5d |", curiter, nchanges);
-    for(int c = 0; c < nclust; c++){
-      printf(" %4d", clust.counts[c]);
-    }
+    for (int c = 0; c < nclust; c++)
+      printf(" %4d", clust->counts[c]);
     printf("\n");
     curiter++;
   }
 
-  // Convergence message
-  if(curiter > MAXITER){
+  // Loop has converged
+  if (curiter > MAXITER)
     printf("WARNING: maximum iteration %d exceeded, may not have conveged\n", MAXITER);
-  } else {
+  else
     printf("CONVERGED: after %d iterations\n", curiter);
-  }
   printf("\n");
 
-  // Confusion matrix
-  int *confusion = calloc(data.nlabels * nclust, sizeof(int));
-  for(int i = 0; i < data.ndata; i++){
-    confusion[data.labels[i] * nclust + data.assigns[i]]++;
+  //////////////////////////////////////////////////////////////////////////////
+  // CLEANUP + OUTPUT
+
+  // CONFUSION MATRIX
+  int **confusion = malloc(sizeof(int *) * data->nlabels); // confusion matrix: labels * clusters big
+  if (!confusion) { perror("malloc"); exit(1); }
+  for (int i = 0; i < data->nlabels; i++) {
+    confusion[i] = calloc(nclust, sizeof(int));
+    if (!confusion[i]) { perror("calloc"); exit(1); }
   }
+
+  for (int i = 0; i < data->ndata; i++)          // count which labels in which clusters
+    confusion[data->labels[i]][data->assigns[i]] += 1;
 
   printf("==CONFUSION MATRIX + COUNTS==\n");
   printf("LABEL \\ CLUST\n");
 
-  // Header
-  printf("%2s ", "");
-  for(int j = 0; j < nclust; j++){
+  printf("%2s ", "");                             // confusion matrix header
+  for (int j = 0; j < clust->nclust; j++)
     printf(" %4d", j);
-  }
   printf(" %4s\n", "TOT");
 
-  // Rows
-  for(int i = 0; i < data.nlabels; i++){
+  for (int i = 0; i < data->nlabels; i++) {       // each row of confusion matrix
     printf("%2d:", i);
     int tot = 0;
-    for(int j = 0; j < nclust; j++){
-      printf(" %4d", confusion[i * nclust + j]);
-      tot += confusion[i * nclust + j];
+    for (int j = 0; j < clust->nclust; j++) {
+      printf(" %4d", confusion[i][j]);
+      tot += confusion[i][j];
     }
     printf(" %4d\n", tot);
   }
 
-  // Total row
-  printf("TOT");
+  printf("TOT");                                  // final total row of confusion matrix
   int tot = 0;
-  for(int c = 0; c < nclust; c++){
-    printf(" %4d", clust.counts[c]);
-    tot += clust.counts[c];
+  for (int c = 0; c < clust->nclust; c++) {
+    printf(" %4d", clust->counts[c]);
+    tot += clust->counts[c];
   }
   printf(" %4d\n", tot);
   printf("\n");
 
-  // Save labels file
-  char outfile[512];
+  // LABEL FILE OUTPUT
+  char outfile[1024];
   snprintf(outfile, sizeof(outfile), "%s/labels.txt", savedir);
   printf("Saving cluster labels to file %s\n", outfile);
   FILE *fout = fopen(outfile, "w");
-  for(int i = 0; i < data.ndata; i++){
-    fprintf(fout, "%2d %2d\n", data.labels[i], data.assigns[i]);
+  if (!fout) {
+    fprintf(stderr, "WARNING: cannot open '%s' for writing: %s\n", outfile, strerror(errno));
+  } else {
+    for (int i = 0; i < data->ndata; i++)
+      fprintf(fout, "%2d %2d\n", data->labels[i], data->assigns[i]);
+    fclose(fout);
   }
-  fclose(fout);
 
-  // Save PGM files
-  save_pgm_files(&clust, savedir);
+  // SAVE PGM FILES CONDITIONALLY
+  save_pgm_files(clust, savedir);
 
-  // Free memory
+  for (int i = 0; i < data->nlabels; i++)
+    free(confusion[i]);
   free(confusion);
-  free(data.features);
-  free(data.labels);
-  free(data.assigns);
-  free(clust.features);
-  free(clust.counts);
+  kmclust_free(clust);
+  kmdata_free(data);
 
   return 0;
 }
+/// END MAIN ///
