@@ -1,3 +1,29 @@
+// usage: kmeans_cuda <datafile> <nclust> [savedir] [maxiter]
+//
+//
+// Parallelization strategy (per A4 description and 14-gpu-cuda.txt):
+//
+//   - Cluster Center Calculation: one thread per (cluster, dim) cell.
+//     Each thread scans all data points and accumulates the d-th
+//     feature of points whose assignment equals its cluster c, then
+//     divides by counts[c]. nclust*dim total threads (~15k for the
+//     full data set), each doing ndata work. NO atomics — output sum
+//     order matches serial exactly, giving bit-identical results.
+//     Sidesteps the lecture's "reductions are tricky" problem by using
+//     the slide-46-style "1 thread per output cell" pattern from the
+//     matrix-multiply example.
+//
+//   - Data Assignment: one thread per data point. Computes distances
+//     to all clusters in the same nested-loop order as serial, finds
+//     the best cluster, updates assigns[i] (no race — each thread owns
+//     one i), and atomicAdds to int counts[] and the int nchanges
+//     scalar. Integer atomicAdd is order-independent so this stays
+//     deterministic.
+//
+//   - Memory layout: 2D arrays (data features, cluster centers) are
+//     flattened to row-major 1D on both host and device for clean
+//     GPU indexing.
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -54,7 +80,7 @@ __global__ void kernel_compute_centers(int ndata, int dim, int nclust,
     if (assigns[i] == c)
       sum += data[i * dim + d];
   }
-  // Match serial: leave at 0.0 if cluster is empty (no division).
+  // Match serial: leave at 0.0 if cluster is empty (no division)
   centers[tid] = (counts[c] > 0) ? (sum / (double)counts[c]) : 0.0;
 }
 
@@ -92,7 +118,7 @@ __global__ void kernel_assign(int ndata, int dim, int nclust,
   }
 }
 
-// ===================== Host I/O helpers =====================
+// Host I/O helpers 
 
 static int count_lines(const char *filename) {
   FILE *f = fopen(filename, "r");
@@ -232,8 +258,6 @@ void save_pgm_files(KMClust *clust, const char *savedir) {
   }
 }
 
-// ===================== Main =====================
-
 int main(int argc, char *argv[]) {
   if (argc < 3) {
     fprintf(stderr, "usage: kmeans_cuda <datafile> <nclust> [savedir] [maxiter]\n");
@@ -274,7 +298,7 @@ int main(int argc, char *argv[]) {
     clust->counts[c] = icount + extra;
   }
 
-  // ===================== GPU setup =====================
+  // GPU setup
   size_t data_bytes    = sizeof(double) * (size_t)data->ndata * data->dim;
   size_t centers_bytes = sizeof(double) * (size_t)clust->nclust * clust->dim;
   size_t assigns_bytes = sizeof(int)    * (size_t)data->ndata;
@@ -348,7 +372,7 @@ int main(int argc, char *argv[]) {
   cudaFree(d_counts);
   cudaFree(d_nchanges);
 
-  // ===================== Confusion matrix + outputs =====================
+  // Confusion matrix + outputs
   int **confusion = (int **)malloc(sizeof(int *) * data->nlabels);
   if (!confusion) { perror("malloc"); exit(1); }
   for (int i = 0; i < data->nlabels; i++) {
@@ -404,4 +428,3 @@ int main(int argc, char *argv[]) {
 
   return 0;
 }
-
