@@ -63,7 +63,7 @@ kmeans_omp Discussion Questions
      I then parallelized over data points again. Each thread computed nearest
      cluster assignments for its own points, while tracking local cluster counts
      and a local change count. These local totals were merged into shared
-     `clust.counts` and global `nchanges` in a synchronized section, so updates
+     clust.counts and global nchanges in a synchronized section, so updates
      remained correct.
 
 
