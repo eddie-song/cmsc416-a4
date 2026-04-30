@@ -1,4 +1,4 @@
-// usage: kmeans_cuda <datafile> <nclust> [savedir] [maxiter]
+// usage: kmeans <datafile> <nclust> [savedir] [maxiter]
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -6,25 +6,18 @@
 #include <math.h>
 #include <float.h>
 #include <errno.h>
-#include <cuda_runtime.h>
-
-// Macro to check that cuda operations succeed and bail if not
-// (lecture slide 18 pattern). Used around every cudaMalloc / cudaMemcpy
-// / cudaMemset call below.
-#define CUDA_CHECK(expr) do {                                            \
-    cudaError_t _e = (expr);                                             \
-    if (_e != cudaSuccess) {                                             \
-      fprintf(stderr, "CUDA error %s:%d: %s\n",                          \
-              __FILE__, __LINE__, cudaGetErrorString(_e));               \
-      exit(1);                                                           \
-    }                                                                    \
-  } while (0)
+#ifdef __APPLE__
+#define ACCELERATE_NEW_LAPACK
+#include <Accelerate/Accelerate.h>
+#else
+#include <cblas.h>
+#endif
 
 // Data set to be clustered
 typedef struct {
   int    ndata;       // count of data
   int    dim;         // dimension of features for data
-  double *features;   // flat ndata*dim row-major (Needs single contiguous block to ship to GPU)
+  double **features;  // pointers to individual features
   int    *assigns;    // cluster to which data is assigned
   int    *labels;     // label for data if available
   int    nlabels;     // max value of labels +1, number 0,1,...,nlabel0
@@ -34,7 +27,7 @@ typedef struct {
 typedef struct {
   int    nclust;      // number of clusters, the "k" in kmeans
   int    dim;         // dimension of features for data
-  double *features;   // flat nclust*dim row-major (Needs single contiguous block to ship to GPU)
+  double **features;  // 2D indexing for individual cluster center features
   int    *counts;     // number of data in each cluster
 } KMClust;
 
@@ -78,7 +71,7 @@ static int count_dim(const char *filename) {
 
 // Load a data set from the named file. Data should be formatted as a
 // text file as:
-//
+// 
 // 7 :  84 185 159 151  60  36   0   0   0   0   0   0
 // 2 :   0  77 251 210  25   0   0   0 122 248 253  65
 // 1 :   0   0   0   0   0   0   0   0   0  45 244 150
@@ -99,19 +92,21 @@ KMData *kmdata_load(const char *datafile) {
   int ndata = count_lines(datafile);
   int dim   = count_dim(datafile);
 
-  KMData *data = (KMData *)malloc(sizeof(KMData));
+  KMData *data = malloc(sizeof(KMData));
   if (!data) { perror("malloc"); exit(1); }
 
   data->ndata = ndata;
   data->dim   = dim;
 
-  // Single flat ndata*dim block (vs serial's array-of-pointers)
-  // so the same buffer can be shipped straight to the GPU.
-  data->features = (double *)malloc(sizeof(double) * (size_t)ndata * dim);
-  data->labels   = (int *)malloc(sizeof(int) * ndata);
-  data->assigns  = (int *)malloc(sizeof(int) * ndata);
+  data->features = malloc(sizeof(double *) * ndata);
+  data->labels   = malloc(sizeof(int) * ndata);
+  data->assigns  = malloc(sizeof(int) * ndata);
   if (!data->features || !data->labels || !data->assigns) {
     perror("malloc"); exit(1);
+  }
+  for (int i = 0; i < ndata; i++) {
+    data->features[i] = malloc(sizeof(double) * dim);
+    if (!data->features[i]) { perror("malloc"); exit(1); }
   }
 
   FILE *f = fopen(datafile, "r");
@@ -130,9 +125,9 @@ KMData *kmdata_load(const char *datafile) {
     for (int d = 0; d < dim; d++) {
       tok = strtok(NULL, " \t\n\r");
       if (tok) {
-        data->features[(size_t)idx * dim + d] = atof(tok);
+        data->features[idx][d] = atof(tok);
       } else {
-        data->features[(size_t)idx * dim + d] = 0.0;
+        data->features[idx][d] = 0.0;
       }
     }
     idx++;
@@ -151,7 +146,9 @@ KMData *kmdata_load(const char *datafile) {
 
 void kmdata_free(KMData *data) {
   if (!data) return;
-  free(data->features); // single buffer, single free
+  for (int i = 0; i < data->ndata; i++)
+    free(data->features[i]);
+  free(data->features);
   free(data->assigns);
   free(data->labels);
   free(data);
@@ -159,17 +156,22 @@ void kmdata_free(KMData *data) {
 
 // Allocate space for clusters in an object
 KMClust *kmclust_new(int nclust, int dim) {
-  KMClust *clust = (KMClust *)malloc(sizeof(KMClust));
+  KMClust *clust = malloc(sizeof(KMClust));
   if (!clust) { perror("malloc"); exit(1); }
 
   clust->nclust = nclust;
   clust->dim    = dim;
 
-  // single flat nclust*dim block (vs serial's array-of-pointers)
-  clust->features = (double *)calloc((size_t)nclust * dim, sizeof(double));
-  clust->counts   = (int *)calloc(nclust, sizeof(int));
+  clust->features = malloc(sizeof(double *) * nclust);
+  clust->counts   = malloc(sizeof(int) * nclust);
   if (!clust->features || !clust->counts) {
-    perror("calloc"); exit(1);
+    perror("malloc"); exit(1);
+  }
+
+  for (int c = 0; c < nclust; c++) {
+    clust->features[c] = calloc(dim, sizeof(double));
+    if (!clust->features[c]) { perror("calloc"); exit(1); }
+    clust->counts[c] = 0;
   }
 
   return clust;
@@ -177,7 +179,9 @@ KMClust *kmclust_new(int nclust, int dim) {
 
 void kmclust_free(KMClust *clust) {
   if (!clust) return;
-  free(clust->features); // single buffer, single free
+  for (int c = 0; c < clust->nclust; c++)
+    free(clust->features[c]);
+  free(clust->features);
   free(clust->counts);
   free(clust);
 }
@@ -195,9 +199,8 @@ void save_pgm_files(KMClust *clust, const char *savedir) {
   double maxfeat = 0.0;
   for (int c = 0; c < clust->nclust; c++) {
     for (int d = 0; d < clust->dim; d++) {
-      double v = clust->features[(size_t)c * clust->dim + d];
-      if (v > maxfeat)
-        maxfeat = v;
+      if (clust->features[c][d] > maxfeat)
+        maxfeat = clust->features[c][d];
     }
   }
 
@@ -215,84 +218,17 @@ void save_pgm_files(KMClust *clust, const char *savedir) {
     for (int d = 0; d < clust->dim; d++) {           // viewers to show how the cluster center
       if (d > 0 && d % dim_root == 0)
         fprintf(pgm, "\n");
-      fprintf(pgm, "%3.0f ", clust->features[(size_t)c * clust->dim + d]);
+      fprintf(pgm, "%3.0f ", clust->features[c][d]);
     }
     fprintf(pgm, "\n");
     fclose(pgm);
   }
 }
 
-//// CUDA KERNELS ////
-// Three GPU kernels replace the inner loops of the serial main-loop.
-// Strategy follows 14-gpu-cuda.txt (slide 46/27 "1 thread per output
-// cell" pattern) so that no atomic reductions over doubles are needed.
-
-// Compute new cluster centers. One thread per (cluster, dim)
-// cell. Each thread scans assigns[] and accumulates the d-th feature
-// of points in cluster c, then divides by counts[c]. NO atomics: each
-// output cell is written by exactly one thread, and the inner sum
-// uses i = 0..ndata-1 in the same order as serial -> bit-identical.
-__global__ void kernel_compute_centers(int ndata, int dim, int nclust,
-                                       const double *data, const int *assigns,
-                                       const int *counts, double *centers) {
-  int tid = blockIdx.x * blockDim.x + threadIdx.x;
-  int total = nclust * dim;
-  if (tid >= total) return;
-  int c = tid / dim;
-  int d = tid % dim;
-
-  double sum = 0.0;
-  for (int i = 0; i < ndata; i++) {
-    if (assigns[i] == c)
-      sum += data[i * dim + d];
-  }
-  // Match serial: leave at 0.0 if cluster is empty (no division).
-  // Plain division (NOT multiply-by-reciprocal) so that .5 ties round
-  // the same way serial does under printf("%3.0f").
-  centers[tid] = (counts[c] > 0) ? (sum / (double)counts[c]) : 0.0;
-}
-
-// Zero an int array on device. Used to reset counts[] each
-// iteration before the assignment kernel.
-__global__ void kernel_zero_ints(int *arr, int n) {
-  int tid = blockIdx.x * blockDim.x + threadIdx.x;
-  if (tid < n) arr[tid] = 0;
-}
-
-// Reassign each data point to its nearest cluster. One thread
-// per data point. Distance computation uses the same nested-loop order
-// as serial. Each thread writes its own assigns[i] (no race). Counts
-// and nchanges use integer atomicAdd which is order-independent.
-__global__ void kernel_assign(int ndata, int dim, int nclust,
-                              const double *data, const double *centers,
-                              int *assigns, int *counts, int *nchanges) {
-  int i = blockIdx.x * blockDim.x + threadIdx.x;
-  if (i >= ndata) return;
-
-  int    best_clust  = -1;
-  double best_distsq = DBL_MAX;
-  for (int c = 0; c < nclust; c++) {              // compare data to each cluster and assign to closest
-    double distsq = 0.0;
-    for (int d = 0; d < dim; d++) {                // calculate squared distance to each data dimension
-      double diff = data[i * dim + d] - centers[c * dim + d];
-      distsq += diff * diff;
-    }
-    if (distsq < best_distsq) {                   // if closer to this cluster than current best
-      best_clust  = c;
-      best_distsq = distsq;
-    }
-  }
-  atomicAdd(&counts[best_clust], 1);
-  if (best_clust != assigns[i]) {                 // assigning data to a different cluster?
-    atomicAdd(nchanges, 1);                       // indicate cluster assignment has changed
-    assigns[i] = best_clust;                      // assign to new cluster
-  }
-}
-
 //// MAIN FUNCTION ////
 int main(int argc, char *argv[]) {
   if (argc < 3) {
-    fprintf(stderr, "usage: kmeans_cuda <datafile> <nclust> [savedir] [maxiter]\n");
+    fprintf(stderr, "usage: kmeans <datafile> <nclust> [savedir] [maxiter]\n");
     return 1;
   }
 
@@ -319,6 +255,8 @@ int main(int argc, char *argv[]) {
   // read in the data file, allocate cluster space
   KMData  *data  = kmdata_load(datafile);
   KMClust *clust = kmclust_new(nclust, data->dim);
+  double *diffs = malloc(sizeof(double) * data->dim);
+  if (!diffs) { perror("malloc"); exit(1); }
 
   printf("ndata: %d\n", data->ndata);
   printf("dim: %d\n", data->dim);
@@ -339,36 +277,6 @@ int main(int argc, char *argv[]) {
   }
 
   //////////////////////////////////////////////////////////////////////////////
-  // Device memory setup
-  // Allocate mirrors of the host buffers on the GPU and ship the data + initial assigns + initial counts over once.
-  // Centers and assignments live on the device for the rest of the loop and only come back at the end.
-  size_t data_bytes    = sizeof(double) * (size_t)data->ndata * data->dim;
-  size_t centers_bytes = sizeof(double) * (size_t)clust->nclust * clust->dim;
-  size_t assigns_bytes = sizeof(int)    * (size_t)data->ndata;
-  size_t counts_bytes  = sizeof(int)    * (size_t)clust->nclust;
-
-  double *d_data, *d_centers;
-  int    *d_assigns, *d_counts, *d_nchanges;
-
-  CUDA_CHECK(cudaMalloc((void **)&d_data,     data_bytes));
-  CUDA_CHECK(cudaMalloc((void **)&d_centers,  centers_bytes));
-  CUDA_CHECK(cudaMalloc((void **)&d_assigns,  assigns_bytes));
-  CUDA_CHECK(cudaMalloc((void **)&d_counts,   counts_bytes));
-  CUDA_CHECK(cudaMalloc((void **)&d_nchanges, sizeof(int)));
-
-  CUDA_CHECK(cudaMemcpy(d_data,    data->features, data_bytes,    cudaMemcpyHostToDevice));
-  CUDA_CHECK(cudaMemcpy(d_assigns, data->assigns,  assigns_bytes, cudaMemcpyHostToDevice));
-  CUDA_CHECK(cudaMemcpy(d_counts,  clust->counts,  counts_bytes,  cudaMemcpyHostToDevice));
-
-  // Launch parameters. One block size for all kernels, block
-  // count is sized per kernel based on which axis it parallelizes over.
-  const int THREADS_PER_BLOCK = 256;
-  int centers_total  = clust->nclust * clust->dim;
-  int blocks_centers = (centers_total + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
-  int blocks_data    = (data->ndata    + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
-  int blocks_counts  = (clust->nclust  + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
-
-  //////////////////////////////////////////////////////////////////////////////
   // THE MAIN ALGORITHM
   int curiter  = 1;                              // current iteration
   int nchanges = data->ndata;                    // check for changes in cluster assignment; 0 is converged
@@ -378,27 +286,45 @@ int main(int argc, char *argv[]) {
   while (nchanges > 0 && curiter <= MAXITER) {   // loop until convergence
 
     // DETERMINE NEW CLUSTER CENTERS
-    // One kernel fuses zero-centers + sum + divide-by-counts.
-    // Reads d_counts (still holding previous iter's values, same as
-    // serial which divides before zeroing counts).
-    kernel_compute_centers<<<blocks_centers, THREADS_PER_BLOCK>>>(
-        data->ndata, clust->dim, clust->nclust,
-        d_data, d_assigns, d_counts, d_centers);
+    for (int c = 0; c < clust->nclust; c++)     // reset cluster centers to 0.0
+      for (int d = 0; d < clust->dim; d++)
+        clust->features[c][d] = 0.0;
+
+    for (int i = 0; i < data->ndata; i++) {      // sum each data row into its assigned center
+      int c = data->assigns[i];
+      cblas_daxpy(clust->dim, 1.0, data->features[i], 1, clust->features[c], 1);
+    }
+
+    for (int c = 0; c < clust->nclust; c++) {   
+      if (clust->counts[c] > 0) {
+        for (int d = 0; d < clust->dim; d++)
+          clust->features[c][d] = clust->features[c][d] / clust->counts[c];
+      }
+    }
 
     // DETERMINE NEW CLUSTER ASSIGNMENTS FOR EACH DATA
-    // Reset cluster counts and nchanges before the assignment kernel.
-    kernel_zero_ints<<<blocks_counts, THREADS_PER_BLOCK>>>(d_counts, clust->nclust);
-    CUDA_CHECK(cudaMemset(d_nchanges, 0, sizeof(int)));
+    for (int c = 0; c < clust->nclust; c++)      // reset cluster counts to 0
+      clust->counts[c] = 0;                     // re-init here to support first iteration
 
-    kernel_assign<<<blocks_data, THREADS_PER_BLOCK>>>(
-        data->ndata, clust->dim, clust->nclust,
-        d_data, d_centers, d_assigns, d_counts, d_nchanges);
-
-    // Pull back nchanges (for the convergence check) and counts
-    // (for the iteration print line). Centers and assigns stay on the
-    // device until after the loop.
-    CUDA_CHECK(cudaMemcpy(&nchanges,     d_nchanges, sizeof(int),  cudaMemcpyDeviceToHost));
-    CUDA_CHECK(cudaMemcpy(clust->counts, d_counts,   counts_bytes, cudaMemcpyDeviceToHost));
+    nchanges = 0;
+    for (int i = 0; i < data->ndata; i++) {       // iterate over all data
+      int    best_clust  = -1;
+      double best_distsq = DBL_MAX;
+      for (int c = 0; c < clust->nclust; c++) {   // compare data to each cluster and assign to closest
+        cblas_dcopy(clust->dim, data->features[i], 1, diffs, 1);
+        cblas_daxpy(clust->dim, -1.0, clust->features[c], 1, diffs, 1);
+        double distsq = cblas_ddot(clust->dim, diffs, 1, diffs, 1);
+        if (distsq < best_distsq) {               // if closer to this cluster than current best
+          best_clust  = c;
+          best_distsq = distsq;
+        }
+      }
+      clust->counts[best_clust] += 1;
+      if (best_clust != data->assigns[i]) {       // assigning data to a different cluster?
+        nchanges += 1;                             // indicate cluster assignment has changed
+        data->assigns[i] = best_clust;             // assign to new cluster
+      }
+    }
 
     // Print iteration information at the end of the iter
     printf("%3d: %5d |", curiter, nchanges);
@@ -415,25 +341,14 @@ int main(int argc, char *argv[]) {
     printf("CONVERGED: after %d iterations\n", curiter);
   printf("\n");
 
-  // Bring final centers and assignments back for the PGM files
-  // and confusion matrix. Then release device memory.
-  CUDA_CHECK(cudaMemcpy(clust->features, d_centers, centers_bytes, cudaMemcpyDeviceToHost));
-  CUDA_CHECK(cudaMemcpy(data->assigns,   d_assigns, assigns_bytes, cudaMemcpyDeviceToHost));
-
-  cudaFree(d_data);
-  cudaFree(d_centers);
-  cudaFree(d_assigns);
-  cudaFree(d_counts);
-  cudaFree(d_nchanges);
-
   //////////////////////////////////////////////////////////////////////////////
   // CLEANUP + OUTPUT
 
   // CONFUSION MATRIX
-  int **confusion = (int **)malloc(sizeof(int *) * data->nlabels); // confusion matrix: labels * clusters big
+  int **confusion = malloc(sizeof(int *) * data->nlabels); // confusion matrix: labels * clusters big
   if (!confusion) { perror("malloc"); exit(1); }
   for (int i = 0; i < data->nlabels; i++) {
-    confusion[i] = (int *)calloc(nclust, sizeof(int));
+    confusion[i] = calloc(nclust, sizeof(int));
     if (!confusion[i]) { perror("calloc"); exit(1); }
   }
 
@@ -486,6 +401,7 @@ int main(int argc, char *argv[]) {
   for (int i = 0; i < data->nlabels; i++)
     free(confusion[i]);
   free(confusion);
+  free(diffs);
   kmclust_free(clust);
   kmdata_free(data);
 
