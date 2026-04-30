@@ -49,6 +49,7 @@ static void die_usage(void) {
 }
 
 static void kmdata_load(const char *datafile, KMData *data) {
+  // first pass gets dataset shape so allocations match file contents
   ssize_t ntokens = 0, nlines = 0;
   if (filestats((char *)datafile, &ntokens, &nlines) != 0) {
     exit(1);
@@ -157,6 +158,7 @@ int main(int argc, char **argv) {
     die_usage();
   }
 
+  // parse required and optional inputs
   const char *datafile = argv[1];
   int nclust = atoi(argv[2]);
   const char *savedir = ".";
@@ -188,6 +190,7 @@ int main(int argc, char **argv) {
     int c = i % clust.nclust;
     data.assigns[i] = c;
   }
+  // keep the same initial per-cluster counts
   for (int c = 0; c < clust.nclust; c++) {
     int icount = data.ndata / clust.nclust;
     int extra = (c < (data.ndata % clust.nclust)) ? 1 : 0;
@@ -199,7 +202,9 @@ int main(int argc, char **argv) {
   printf("==CLUSTERING: MAXITER %d==\n", MAXITER);
   printf("ITER NCHANGE CLUST_COUNTS\n");
 
+  // stop when assignments do not change or max iterations is reached
   while (nchanges > 0 && curiter <= MAXITER) {
+    // recompute cluster centers from current assignments
     size_t feat_sz = (size_t)clust.nclust * clust.dim;
     memset(clust.features, 0, feat_sz * sizeof(double));
 
@@ -213,6 +218,7 @@ int main(int argc, char **argv) {
 #pragma omp parallel
     {
       int tid = omp_get_thread_num();
+      // manual reduction each thread accumulates into private storage
       double *mine = &local_sums[(size_t)tid * feat_sz];
 #pragma omp for schedule(static)
       for (int i = 0; i < data.ndata; i++) {
@@ -236,6 +242,7 @@ int main(int argc, char **argv) {
 #pragma omp parallel for schedule(static)
     for (int c = 0; c < clust.nclust; c++) {
       if (clust.counts[c] > 0) {
+        // convert summed features into mean features
         double *cf = clust_feat(&clust, c);
         for (int d = 0; d < clust.dim; d++) {
           cf[d] /= clust.counts[c];
@@ -246,6 +253,7 @@ int main(int argc, char **argv) {
     memset(clust.counts, 0, (size_t)clust.nclust * sizeof(int));
     nchanges = 0;
 
+    // assign each point to its nearest cluster
 #pragma omp parallel
     {
       int *local_counts = calloc(clust.nclust, sizeof(int));
@@ -260,6 +268,7 @@ int main(int argc, char **argv) {
         int best_clust = -1;
         double best_distsq = INFINITY;
         double *df = data_feat(&data, i);
+        // compare the point against all cluster centers
         for (int c = 0; c < clust.nclust; c++) {
           double distsq = 0.0;
           double *cf = clust_feat(&clust, c);
@@ -281,6 +290,7 @@ int main(int argc, char **argv) {
 
 #pragma omp critical
       {
+        // merge per-thread counts and assignment changes safely
         for (int c = 0; c < clust.nclust; c++) {
           clust.counts[c] += local_counts[c];
         }
@@ -311,6 +321,7 @@ int main(int argc, char **argv) {
     exit(1);
   }
 
+  // summarize final assignments against labels
   for (int i = 0; i < data.ndata; i++) {
     confusion[(size_t)data.labels[i] * nclust + data.assigns[i]]++;
   }
@@ -345,6 +356,7 @@ int main(int argc, char **argv) {
 
   char outfile[1024];
   snprintf(outfile, sizeof(outfile), "%s/labels.txt", savedir);
+  // save label and final cluster assignment for each data point
   printf("Saving cluster labels to file %s\n", outfile);
   FILE *fout = fopen(outfile, "w");
   if (fout == NULL) {
